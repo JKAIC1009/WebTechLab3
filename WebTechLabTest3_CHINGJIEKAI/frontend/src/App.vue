@@ -14,7 +14,7 @@
                 <input v-model="newUser.email" type="email" class="form-control" id="email" placeholder="ching@graduate.utm.my" required>
               </div>
               <button type="submit" class="btn btn-success me-2">Save</button>
-              <button type="button" class="btn btn-primary" @click="updateUser">Update</button>
+              <button type="button" class="btn btn-primary" @click="updateUserfunction">Update</button>
             </form>
           </div>
         </div>
@@ -73,7 +73,7 @@ export default {
       this.selectedUser = user
       this.newUser = { ...user }
     },
-    updateUser() {
+    updateUserfunction() {
       if (this.selectedUser && this.newUser.name && this.newUser.email) {
         this.updateUser({ id: this.selectedUser.id, ...this.newUser })
         this.selectedUser = null

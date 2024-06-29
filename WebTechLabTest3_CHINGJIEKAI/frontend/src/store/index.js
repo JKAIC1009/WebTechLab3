@@ -49,17 +49,17 @@ export default createStore({
           throw error
         }
       },
-      async updateUser({ commit }, userData) {
-        try {
-          console.log('Updating user with data:', userData);
-          const response = await axios.put(`${API_BASE_URL}/users/${userData.id}`, userData)
-          commit('updateUser', response.data)
-        } catch (error) {
-          console.error('Error updating user:', error.response ? error.response.data : error.message);
-          commit('setError', 'Failed to update user')
-          throw error
-        }
-      },
+    async updateUser({ commit }, userData) {
+      try {
+        console.log('Updating user with data:', userData);
+        const response = await axios.put(`${API_BASE_URL}/users/${userData.id}`, userData)
+        commit('updateUser', response.data)
+      } catch (error) {
+        console.error('Error updating user:', error.response ? error.response.data : error.message);
+        commit('setError', 'Failed to update user')
+        throw error
+      }
+    },
     async deleteUser({ commit }, userId) {
       try {
         await axios.delete(`${API_BASE_URL}/users/${userId}`)

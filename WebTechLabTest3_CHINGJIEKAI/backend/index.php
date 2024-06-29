@@ -8,7 +8,9 @@ require_once './config.php';
 
 $app = AppFactory::create();
 
+// Add parsing middleware
 $app->addBodyParsingMiddleware();
+
 // Add error middleware
 $app->addErrorMiddleware(true, true, true);
 
@@ -18,7 +20,12 @@ $app->add(function ($request, $handler) {
     return $response
         ->withHeader('Access-Control-Allow-Origin', '*')
         ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
-        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+});
+
+// Handle preflight requests
+$app->options('/{routes:.+}', function ($request, $response, $args) {
+    return $response;
 });
 
 // Instantiate db class
@@ -48,7 +55,8 @@ $app->get('/users', function (Request $request, Response $response, $args) use (
         $response->getBody()->write(json_encode($result));
         return $response->withHeader('Content-Type', 'application/json');
     } catch (PDOException $e) {
-        $response->getBody()->write(json_encode(["error" => "Error: " . $e->getMessage()]));
+        $error = ["error" => "Database error: " . $e->getMessage()];
+        $response->getBody()->write(json_encode($error));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
 });
@@ -66,69 +74,88 @@ $app->get('/users/{id}', function (Request $request, Response $response, $args) 
             $response->getBody()->write(json_encode($user));
             return $response->withHeader('Content-Type', 'application/json');
         } else {
-            $response->getBody()->write(json_encode(["error" => "User not found"]));
+            $error = ["error" => "User not found"];
+            $response->getBody()->write(json_encode($error));
             return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
         }
     } catch (PDOException $e) {
-        $response->getBody()->write(json_encode(["error" => "Database error: " . $e->getMessage()]));
+        $error = ["error" => "Database error: " . $e->getMessage()];
+        $response->getBody()->write(json_encode($error));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
 });
 
 $app->post('/users', function (Request $request, Response $response, $args) use ($db) {
+    $data = $request->getParsedBody();
+    error_log('Received data: ' . json_encode($data));
+    
+    $errors = validateUserData($data);
+    if (!empty($errors)) {
+        error_log('Validation errors: ' . json_encode($errors));
+        $response->getBody()->write(json_encode(["errors" => $errors]));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+    
     try {
-        $data = $request->getParsedBody();
-        error_log('Received data: ' . json_encode($data)); // Log received data
-        
-        $errors = validateUserData($data);
-        if (!empty($errors)) {
-            error_log('Validation errors: ' . json_encode($errors)); // Log validation errors
-            $response->getBody()->write(json_encode(["errors" => $errors]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-        }
-        
         $conn = $db->connect();
-        $name = $data['name'];
-        $email = $data['email'];
         $sql = "INSERT INTO users (name, email) VALUES (:name, :email)";
         $stmt = $conn->prepare($sql);
-        $stmt->bindValue(':name', $name);
-        $stmt->bindValue(':email', $email);
+        $stmt->bindValue(':name', $data['name']);
+        $stmt->bindValue(':email', $data['email']);
         $stmt->execute();
         $userId = $conn->lastInsertId();
-        $newUser = ['id' => $userId, 'name' => $name, 'email' => $email];
+        $newUser = ['id' => $userId, 'name' => $data['name'], 'email' => $data['email']];
         $response->getBody()->write(json_encode($newUser));
         return $response->withStatus(201)->withHeader('Content-Type', 'application/json');
-    } catch (Exception $e) {
-        error_log('Error creating user: ' . $e->getMessage()); // Log any exceptions
-        $response->getBody()->write(json_encode(["error" => "Error creating user: " . $e->getMessage()]));
+    } catch (PDOException $e) {
+        error_log('Error creating user: ' . $e->getMessage());
+        $error = ["error" => "Error creating user: " . $e->getMessage()];
+        $response->getBody()->write(json_encode($error));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
 });
 
 $app->put('/users/{id}', function (Request $request, Response $response, $args) use ($db) {
+    $id = $args['id'];
+    $data = $request->getParsedBody();
+    error_log('Received data for update: ' . json_encode($data));
+    
+    $errors = validateUserData($data);
+    if (!empty($errors)) {
+        error_log('Validation errors: ' . json_encode($errors));
+        $response->getBody()->write(json_encode(["errors" => $errors]));
+        return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+    }
+    
     try {
-        $id = $args['id'];
-        $data = $request->getParsedBody();
-        $errors = validateUserData($data);
-        if (!empty($errors)) {
-            $response->getBody()->write(json_encode(["errors" => $errors]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-        }
         $conn = $db->connect();
-        $name = $data['name'];
-        $email = $data['email'];
         $sql = "UPDATE users SET name = :name, email = :email WHERE id = :id";
         $stmt = $conn->prepare($sql);
-        $stmt->bindValue(':name', $name);
-        $stmt->bindValue(':email', $email);
+        $stmt->bindValue(':name', $data['name']);
+        $stmt->bindValue(':email', $data['email']);
         $stmt->bindValue(':id', $id);
         $stmt->execute();
-        $updatedUser = ['id' => $id, 'name' => $name, 'email' => $email];
-        $response->getBody()->write(json_encode($updatedUser));
-        return $response->withHeader('Content-Type', 'application/json');
-    } catch (Exception $e) {
-        $response->getBody()->write(json_encode(["error" => "Error updating user: " . $e->getMessage()]));
+        
+        // Check if the user exists
+        $checkSql = "SELECT * FROM users WHERE id = :id";
+        $checkStmt = $conn->prepare($checkSql);
+        $checkStmt->bindValue(':id', $id);
+        $checkStmt->execute();
+        $user = $checkStmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($user) {
+            $updatedUser = ['id' => $id, 'name' => $data['name'], 'email' => $data['email']];
+            $response->getBody()->write(json_encode($updatedUser));
+            return $response->withHeader('Content-Type', 'application/json');
+        } else {
+            $error = ["error" => "User not found"];
+            $response->getBody()->write(json_encode($error));
+            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+        }
+    } catch (PDOException $e) {
+        error_log('Error updating user: ' . $e->getMessage());
+        $error = ["error" => "Error updating user: " . $e->getMessage()];
+        $response->getBody()->write(json_encode($error));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
 });
@@ -141,10 +168,19 @@ $app->delete('/users/{id}', function (Request $request, Response $response, $arg
         $stmt = $conn->prepare($sql);
         $stmt->bindValue(':id', $id);
         $stmt->execute();
-        $response->getBody()->write(json_encode(["message" => "User deleted successfully"]));
-        return $response->withHeader('Content-Type', 'application/json');
+        
+        if ($stmt->rowCount() > 0) {
+            $response->getBody()->write(json_encode(["message" => "User deleted successfully"]));
+            return $response->withHeader('Content-Type', 'application/json');
+        } else {
+            $error = ["error" => "User not found"];
+            $response->getBody()->write(json_encode($error));
+            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+        }
     } catch (PDOException $e) {
-        $response->getBody()->write(json_encode(["error" => "Error deleting user: " . $e->getMessage()]));
+        error_log('Error deleting user: ' . $e->getMessage());
+        $error = ["error" => "Error deleting user: " . $e->getMessage()];
+        $response->getBody()->write(json_encode($error));
         return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
     }
 });
